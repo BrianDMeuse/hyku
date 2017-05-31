@@ -2,19 +2,21 @@
 class Account < ActiveRecord::Base
   # @param [String] piece the tenant piece of the canonical name
   # @return [String] full canonical name
+  # @raise [ArgumentError] if piece contains a trailing dot
   # @see Settings.multitenancy.default_host
   def self.default_cname(piece)
     return unless piece
+    raise ArgumentError, "param '#{piece}' must not contain trailing dots" if piece =~ /\.\Z/
     default_host = Settings.multitenancy.default_host || "%{tenant}.#{admin_host}"
-    format(default_host, tenant: piece.parameterize)
+    canonical_cname(format(default_host, tenant: piece.parameterize))
   end
 
   # Canonicalize the account cname or request host for comparison
   # @param [String] cname distinct part of host name
   # @return [String] canonicalized host name
   def self.canonical_cname(cname)
-    # DNS host names are case-insensitive. Convert complete domain names to relative names.
-    cname &&= cname.downcase.sub(/\.\Z/, '')
+    # DNS host names are case-insensitive. Trim trailing dot(s).
+    cname &&= cname.downcase.sub(/\.*\Z/, '')
     cname
   end
 
@@ -27,7 +29,10 @@ class Account < ActiveRecord::Base
 
   attr_readonly :tenant
   # name is unused after create, only used by sign_up/new forms
-  validates :name, presence: true, unless: 'cname.present? && cname != default_cname("")'
+  validates :name,
+            presence: true,
+            unless: :cname_is_blank?
+
   validates :tenant, presence: true, uniqueness: true
   validates :cname, presence: true, uniqueness: true, exclusion: { in: [default_cname('')] }
 
@@ -58,11 +63,23 @@ class Account < ActiveRecord::Base
     end
   end
 
+  def solr_endpoint
+    super || NilSolrEndpoint.new
+  end
+
+  def fcrepo_endpoint
+    super || NilFcrepoEndpoint.new
+  end
+
+  def redis_endpoint
+    super || NilRedisEndpoint.new
+  end
+
   # Make all the account specific connections active
   def switch!
-    solr_endpoint.switch! if solr_endpoint
-    fcrepo_endpoint.switch! if fcrepo_endpoint
-    redis_endpoint.switch! if redis_endpoint
+    solr_endpoint.switch!
+    fcrepo_endpoint.switch!
+    redis_endpoint.switch!
   end
 
   def switch
@@ -73,15 +90,19 @@ class Account < ActiveRecord::Base
   end
 
   def reset!
-    solr_endpoint.reset! if solr_endpoint
-    fcrepo_endpoint.reset! if fcrepo_endpoint
-    redis_endpoint.reset! if redis_endpoint
+    SolrEndpoint.reset!
+    FcrepoEndpoint.reset!
+    RedisEndpoint.reset!
   end
 
   private
 
     def default_cname(piece = name)
       self.class.default_cname(piece)
+    end
+
+    def cname_is_blank?
+      cname.present? && cname != default_cname("")
     end
 
     def canonicalize_cname

@@ -1,5 +1,6 @@
 Hyrax.config do |config|
   config.register_curation_concern :generic_work
+  # Injected via `rails g hyrax:work Image`
   config.register_curation_concern :image
 
   # Email recipient of messages sent via the contact form
@@ -97,7 +98,15 @@ Hyrax.config do |config|
 
   # Temporary path to hold uploads before they are ingested into FCrepo.
   # This must be a lambda that returns a Pathname
-  #  config.upload_path = ->() { Rails.root + 'tmp' + 'uploads' }
+  if Settings.multitenancy.enabled
+   config.upload_path = ->() do
+     if Settings.s3.upload_bucket
+       "uploads/#{Apartment::Tenant.current}"
+     else
+       Rails.root + 'tmp' + 'uploads' + Apartment::Tenant.current
+     end
+   end
+  end
 
   # Location on local file system where derivatives will be stored.
   # If you use a multi-server architecture, this MUST be a shared volume.
